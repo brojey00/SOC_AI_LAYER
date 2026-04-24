@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  ai_engine:
+    build:
+      context: ./fastAPI
+      dockerfile: Dockerfile
+    container_name: ai_engine
+    environment:
+      MODEL_PATH: soc_model.pkl
+      FEATURE_COLUMNS_PATH: feature_columns.pkl
+      LABEL_ENCODER_PATH: label_encoder.pkl
+      WAZUH_INDEXER_URL: ${WAZUH_INDEXER_URL:-}
+      WAZUH_USERNAME: ${WAZUH_USERNAME:-}
+      WAZUH_PASSWORD: ${WAZUH_PASSWORD:-}
+      WAZUH_INDEX_PATTERN: ${WAZUH_INDEX_PATTERN:-wazuh-alerts-*}
+      WAZUH_VERIFY_TLS: ${WAZUH_VERIFY_TLS:-false}
+      WAZUH_TIMEOUT_SEC: ${WAZUH_TIMEOUT_SEC:-5}
+    volumes:
+      - ./fastAPI:/app
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  watcher:
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile
+    container_name: flow_watcher
+    environment:
+      CSV_PATH: /shared_data/live_flows.csv
+      AI_URL: http://ai_engine:8000/predict
+      POLL_INTERVAL_SEC: ${POLL_INTERVAL_SEC:-0.2}
+      REQUEST_TIMEOUT_SEC: ${REQUEST_TIMEOUT_SEC:-10}
+      BACKOFF_INITIAL_SEC: ${BACKOFF_INITIAL_SEC:-1}
+      BACKOFF_MAX_SEC: ${BACKOFF_MAX_SEC:-60}
+      BACKOFF_JITTER_SEC: ${BACKOFF_JITTER_SEC:-0.25}
+    volumes:
+      - ./shared_data:/shared_data
+    depends_on:
+      - ai_engine
+    restart: unless-stopped
+
