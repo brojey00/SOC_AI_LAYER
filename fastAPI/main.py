@@ -4,9 +4,8 @@ import os
 import pickle
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from urllib.parse import unquote
-import asyncio
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 
