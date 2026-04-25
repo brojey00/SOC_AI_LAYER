@@ -5,8 +5,9 @@ import pickle
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-
-import requests
+from urllib.parse import unquote
+import asyncio
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 
 from process_flows import prepare_features
@@ -77,12 +78,19 @@ def _extract_observability_fields(flow: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _decode_payload(text: str) -> str:
+    """Decode URL-encoded payloads before regex matching (handles %3Cscript%3E etc.)"""
+    try:
+        return unquote(unquote(text))  # double-decode catches double-encoded payloads
+    except Exception:
+        return text
+
 SQLI_REGEX = re.compile(
-    r"(union\s+select|select\s+.+\s+from|drop\s+table|insert\s+into|delete\s+from|or\s+1=1|xp_cmdshell|information_schema)",
+    r"(union\s+select|select\s+.+\s+from|drop\s+table|insert\s+into|delete\s+from|or\s+1\s*=\s*1|xp_cmdshell|information_schema|--\s|;\s*--)",
     re.IGNORECASE,
 )
 XSS_REGEX = re.compile(
-    r"(<script|</script>|javascript:|onerror=|onload=|alert\s*\(|document\.cookie|eval\s*\()",
+    r"(<script[\s>]|</script>|javascript\s*:|onerror\s*=|onload\s*=|alert\s*\(|document\.cookie|eval\s*\(|<img[^>]+src\s*=)",
     re.IGNORECASE,
 )
 RCE_REGEX = re.compile(
@@ -98,18 +106,19 @@ LFI_REGEX = re.compile(
 def _classify_web_sub_type(full_log: str) -> str:
     if not full_log:
         return "Web Attack - Unknown"
-    if SQLI_REGEX.search(full_log):
+    decoded = _decode_payload(full_log)
+    if SQLI_REGEX.search(decoded):
         return "Web Attack - SQLi"
-    if XSS_REGEX.search(full_log):
+    if XSS_REGEX.search(decoded):
         return "Web Attack - XSS"
-    if RCE_REGEX.search(full_log):
+    if RCE_REGEX.search(decoded):
         return "Web Attack - RCE"
-    if LFI_REGEX.search(full_log):
+    if LFI_REGEX.search(decoded):
         return "Web Attack - LFI"
     return "Web Attack - Unknown"
 
 
-def _query_wazuh_full_log(src_ip: str) -> str:
+async def _query_wazuh_full_log(src_ip: str) -> str:
     if not (WAZUH_INDEXER_URL and WAZUH_USERNAME and WAZUH_PASSWORD and src_ip):
         return ""
 
@@ -132,14 +141,13 @@ def _query_wazuh_full_log(src_ip: str) -> str:
 
     url = f"{WAZUH_INDEXER_URL}/{WAZUH_INDEX_PATTERN}/_search"
     try:
-        resp = requests.post(
-            url,
-            auth=(WAZUH_USERNAME, WAZUH_PASSWORD),
-            json=query,
-            timeout=WAZUH_TIMEOUT_SEC,
-            verify=WAZUH_VERIFY_TLS,
-            headers={"Content-Type": "application/json"},
-        )
+        async with httpx.AsyncClient(verify=WAZUH_VERIFY_TLS, timeout=WAZUH_TIMEOUT_SEC) as client:
+            resp = await client.post(
+                url,
+                auth=(WAZUH_USERNAME, WAZUH_PASSWORD),
+                json=query,
+                headers={"Content-Type": "application/json"},
+            )
         if resp.status_code >= 300:
             print(f"[ai_engine] wazuh query failed: {resp.status_code} {resp.text[:300]}")
             return ""
@@ -154,29 +162,36 @@ def _query_wazuh_full_log(src_ip: str) -> str:
         if full_log:
             return str(full_log)
 
-        fallback = " ".join(
-            [
-                str(src.get("rule.description", "")),
-                str(src.get("data.url", "")),
-                str(src.get("data.data", "")),
-            ]
-        ).strip()
+        fallback = " ".join([
+            str(src.get("rule.description", "")),
+            str(src.get("data.url", "")),
+            str(src.get("data.data", "")),
+        ]).strip()
         return fallback
     except Exception as exc:
         print(f"[ai_engine] wazuh exception: {exc}")
         return ""
 
 
-with open(MODEL_PATH, "rb") as f:
-    model = pickle.load(f)
+try:
+    with open(MODEL_PATH, "rb") as f:
+        model = pickle.load(f)
+except FileNotFoundError:
+    raise RuntimeError(f"[ai_engine] Model file not found: {MODEL_PATH}. Place soc_model.pkl in the /app directory.")
 
-with open(FEATURE_COLUMNS_PATH, "rb") as f:
-    feature_columns = pickle.load(f)
+try:
+    with open(FEATURE_COLUMNS_PATH, "rb") as f:
+        feature_columns = pickle.load(f)
+except FileNotFoundError:
+    raise RuntimeError(f"[ai_engine] Feature columns file not found: {FEATURE_COLUMNS_PATH}. Place feature_columns.pkl in the /app directory.")
 
 label_encoder = None
 if os.path.exists(LABEL_ENCODER_PATH):
-    with open(LABEL_ENCODER_PATH, "rb") as f:
-        label_encoder = pickle.load(f)
+    try:
+        with open(LABEL_ENCODER_PATH, "rb") as f:
+            label_encoder = pickle.load(f)
+    except Exception as exc:
+        print(f"[ai_engine] WARNING: Could not load label encoder: {exc}. Predictions will use raw numeric labels.")
 
 # Use the model's expected columns if available, else fallback to feature_columns.
 model_feature_columns = list(getattr(model, "feature_names_in_", feature_columns))
@@ -201,10 +216,20 @@ async def predict(request: Request):
     if len(values) != len(feature_columns):
         raise HTTPException(
             status_code=400,
-            detail=f"Column mismatch: got {len(values)} values, expected {len(feature_columns)}",
-        )
+            detail=(
+                f"Column mismatch: got {len(values)} values, expected {len(feature_columns)} "
+                f"(based on feature_columns.pkl). Check that the CSV row matches the training schema."
+            ),
+    )
 
     flow_dict = dict(zip(feature_columns, values))
+
+    # Sanity check: warn if model_feature_columns diverges from feature_columns after ID stripping
+    expected_model_cols = set(model_feature_columns)
+    incoming_cols = set(feature_columns)
+    missing = expected_model_cols - incoming_cols
+    if missing:
+        print(f"[ai_engine] WARNING: model expects columns not found in incoming flow: {missing}. Predictions may be wrong.")
     ids = _extract_identifiers(flow_dict)
     obs = _extract_observability_fields(flow_dict)
 
@@ -233,13 +258,14 @@ async def predict(request: Request):
 
     sub_type = "N/A"
     if ml_label == "Web Attack":
-        full_log = _query_wazuh_full_log(ids["src_ip"])
+        full_log = await _query_wazuh_full_log(ids["src_ip"])
         sub_type = _classify_web_sub_type(full_log)
 
     result = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "ml_label": ml_label,
         "src_ip": ids["src_ip"],
+        "src_port": ids["src_port"],
         "dst_ip": ids["dst_ip"],
         "dst_port": ids["dst_port"],
         "protocol": obs["protocol"],

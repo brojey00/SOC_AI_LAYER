@@ -7,7 +7,7 @@ from typing import Optional
 import requests
 
 CSV_PATH = os.getenv("CSV_PATH", "/shared_data/live_flows.csv")
-AI_URL = os.getenv("AI_URL", "http://fastAPI:8000/predict")
+AI_URL = os.getenv("AI_URL", "http://ai_engine:8000/predict")
 
 POLL_INTERVAL_SEC = float(os.getenv("POLL_INTERVAL_SEC", "0.2"))
 REQUEST_TIMEOUT_SEC = float(os.getenv("REQUEST_TIMEOUT_SEC", "10"))
