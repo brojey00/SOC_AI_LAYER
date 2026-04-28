@@ -9,7 +9,7 @@ from urllib.parse import unquote
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 
-from process_flows import prepare_features
+from process_flows import prepare_features, debug_features
 
 app = FastAPI(title="SOC AI Engine", version="1.0.0")
 
@@ -27,7 +27,8 @@ WAZUH_TIMEOUT_SEC = float(os.getenv("WAZUH_TIMEOUT_SEC", "5"))
 OUTPUT_URL= os.getenv("OUTPUT_URL", "http://100.104.54.105:8080/ingest")
 OUTPUT_TIMEOUT_SEC = float(os.getenv("OUTPUT_TIMEOUT_SEC", "5"))
 def _norm(text: str) -> str:
-    return text.strip().lower().replace(" ", "_")
+    """Mirror of process_flows._norm — keep both in sync."""
+    return text.strip().lower().replace(" ", "_").replace("/", "_")
 
 
 def _find_value(flow: Dict[str, Any], aliases: List[str], default: Any = "") -> Any:
@@ -347,6 +348,10 @@ async def predict(request: Request):
         feature_encoder=label_encoder,
     )
 
+    # ── Debug: log feature values so we can verify real data flows through ──
+    if os.getenv("DEBUG_FEATURES", "false").lower() == "true":
+        debug_features(X)
+
     pred_raw = model.predict(X)[0]
     if hasattr(label_encoder, "inverse_transform"):
         try:
@@ -363,6 +368,16 @@ async def predict(request: Request):
             confidence = float(max(proba))
         except Exception:
             confidence = 1.0
+
+    # ── Bug 4 guard: low-confidence Normal is suspect when the pipeline
+    #    may have been feeding zero-vectors (model has strong zero=Normal prior).
+    CONFIDENCE_THRESHOLD = float(os.getenv("NORMAL_CONFIDENCE_THRESHOLD", "0.85"))
+    if ml_label == "Normal" and confidence < CONFIDENCE_THRESHOLD:
+        ml_label = "Unknown / Low Confidence"
+        print(
+            f"[ai_engine] WARNING: Prediction was Normal but confidence {confidence:.3f} "
+            f"< {CONFIDENCE_THRESHOLD:.2f} — overriding to 'Unknown / Low Confidence'."
+        )
 
     sub_type = "N/A"
     if ml_label == "Web Attack":

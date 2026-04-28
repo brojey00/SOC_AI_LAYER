@@ -21,7 +21,14 @@ ID_ALIASES = {
 
 
 def _norm(text: str) -> str:
-    return text.strip().lower().replace(" ", "_")
+    """Normalise a column name for fuzzy matching.
+
+    Strips leading/trailing whitespace, lower-cases, and replaces both
+    spaces *and* forward-slashes with underscores so that names like
+    "Flow Bytes/s" and "Bwd Packets/s" round-trip correctly through the
+    lookup table built in prepare_features().
+    """
+    return text.strip().lower().replace(" ", "_").replace("/", "_")
 
 
 def _safe_float(value: Any) -> float:
@@ -83,7 +90,6 @@ def prepare_features(
 
     frame = pd.DataFrame([prepared])
 
- 
     frame = frame.replace([float("inf"), float("-inf")], 0).fillna(0)
 
     for col in frame.columns:
@@ -91,3 +97,18 @@ def prepare_features(
     frame = frame.fillna(0)
 
     return frame
+
+
+def debug_features(frame: "pd.DataFrame") -> None:
+    """Print a diagnostic row showing every feature value sent to the model.
+
+    Call this after prepare_features() to verify that real values are
+    flowing through the pipeline (not all-zeros).  Remove or gate behind
+    an env-var flag in production.
+    """
+    record = frame.to_dict(orient="records")[0]
+    zero_cols = [k for k, v in record.items() if v == 0]
+    nonzero_cols = {k: v for k, v in record.items() if v != 0}
+    print(f"[DEBUG] Feature values (non-zero): {nonzero_cols}")
+    if zero_cols:
+        print(f"[DEBUG] Zero-valued features ({len(zero_cols)}): {zero_cols}")

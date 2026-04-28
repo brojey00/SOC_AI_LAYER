@@ -18,6 +18,8 @@ services:
       WAZUH_TIMEOUT_SEC: ${WAZUH_TIMEOUT_SEC:-5}
       OUTPUT_URL: ${OUTPUT_URL:-http://100.104.54.105:8080/ingest}
       OUTPUT_TIMEOUT_SEC: ${OUTPUT_TIMEOUT_SEC:-5}
+      DEBUG_FEATURES: ${DEBUG_FEATURES:-false}
+      NORMAL_CONFIDENCE_THRESHOLD: ${NORMAL_CONFIDENCE_THRESHOLD:-0.85}
     volumes:
       - ./fastAPI:/app
       - ./models:/app/models
