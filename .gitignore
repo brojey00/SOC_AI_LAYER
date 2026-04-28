@@ -1,3 +1,4 @@
 /fastAPI/feature_columns.pkl
 /fastAPI/label_encoder.pkl
 /fastAPI/soc_model.pkl
+.env

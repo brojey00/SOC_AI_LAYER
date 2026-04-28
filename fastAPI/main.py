@@ -24,7 +24,8 @@ WAZUH_INDEX_PATTERN = os.getenv("WAZUH_INDEX_PATTERN", "wazuh-alerts-*")
 WAZUH_VERIFY_TLS = os.getenv("WAZUH_VERIFY_TLS", "false").lower() == "true"
 WAZUH_TIMEOUT_SEC = float(os.getenv("WAZUH_TIMEOUT_SEC", "5"))
 
-
+OUTPUT_URL= os.getenv("OUTPUT_URL", "http://100.104.54.105:8080/ingest")
+OUTPUT_TIMEOUT_SEC = float(os.getenv("OUTPUT_TIMEOUT_SEC", "5"))
 def _norm(text: str) -> str:
     return text.strip().lower().replace(" ", "_")
 
@@ -196,6 +197,107 @@ if os.path.exists(LABEL_ENCODER_PATH):
 model_feature_columns = list(getattr(model, "feature_names_in_", feature_columns))
 
 
+# Actual cicflowmeter (hieulw/cicflowmeter) output column order
+# mapped to CIC-IDS2017 names that match the model's training features.
+CIC_82_COLUMNS = [
+    "src_ip",                      # 0  src_ip
+    "dst_ip",                      # 1  dst_ip
+    "src_port",                    # 2  src_port
+    "Destination Port",            # 3  dst_port
+    "Protocol",                    # 4  protocol
+    "Timestamp",                   # 5  timestamp
+    "Flow Duration",               # 6  flow_duration
+    "Flow Bytes/s",                # 7  flow_byts_s
+    "Flow Packets/s",              # 8  flow_pkts_s
+    "Fwd Packets/s",               # 9  fwd_pkts_s
+    "Bwd Packets/s",               # 10 bwd_pkts_s
+    "Total Fwd Packets",           # 11 tot_fwd_pkts
+    "Total Backward Packets",      # 12 tot_bwd_pkts
+    "Total Length of Fwd Packets", # 13 totlen_fwd_pkts
+    "Total Length of Bwd Packets", # 14 totlen_bwd_pkts
+    "Fwd Packet Length Max",       # 15 fwd_pkt_len_max
+    "Fwd Packet Length Min",       # 16 fwd_pkt_len_min
+    "Fwd Packet Length Mean",      # 17 fwd_pkt_len_mean
+    "Fwd Packet Length Std",       # 18 fwd_pkt_len_std
+    "Bwd Packet Length Max",       # 19 bwd_pkt_len_max
+    "Bwd Packet Length Min",       # 20 bwd_pkt_len_min
+    "Bwd Packet Length Mean",      # 21 bwd_pkt_len_mean
+    "Bwd Packet Length Std",       # 22 bwd_pkt_len_std
+    "Max Packet Length",           # 23 pkt_len_max
+    "Min Packet Length",           # 24 pkt_len_min
+    "Packet Length Mean",          # 25 pkt_len_mean
+    "Packet Length Std",           # 26 pkt_len_std
+    "Packet Length Variance",      # 27 pkt_len_var
+    "Fwd Header Length",           # 28 fwd_header_len
+    "Bwd Header Length",           # 29 bwd_header_len
+    "min_seg_size_forward",        # 30 fwd_seg_size_min
+    "act_data_pkt_fwd",            # 31 fwd_act_data_pkts
+    "Flow IAT Mean",               # 32 flow_iat_mean
+    "Flow IAT Max",                # 33 flow_iat_max
+    "Flow IAT Min",                # 34 flow_iat_min
+    "Flow IAT Std",                # 35 flow_iat_std
+    "Fwd IAT Total",               # 36 fwd_iat_tot
+    "Fwd IAT Max",                 # 37 fwd_iat_max
+    "Fwd IAT Min",                 # 38 fwd_iat_min
+    "Fwd IAT Mean",                # 39 fwd_iat_mean
+    "Fwd IAT Std",                 # 40 fwd_iat_std
+    "Bwd IAT Total",               # 41 bwd_iat_tot
+    "Bwd IAT Max",                 # 42 bwd_iat_max
+    "Bwd IAT Min",                 # 43 bwd_iat_min
+    "Bwd IAT Mean",                # 44 bwd_iat_mean
+    "Bwd IAT Std",                 # 45 bwd_iat_std
+    "Fwd PSH Flags",               # 46 fwd_psh_flags
+    "Bwd PSH Flags",               # 47 bwd_psh_flags
+    "Fwd URG Flags",               # 48 fwd_urg_flags
+    "Bwd URG Flags",               # 49 bwd_urg_flags
+    "FIN Flag Count",              # 50 fin_flag_cnt
+    "SYN Flag Count",              # 51 syn_flag_cnt
+    "RST Flag Count",              # 52 rst_flag_cnt
+    "PSH Flag Count",              # 53 psh_flag_cnt
+    "ACK Flag Count",              # 54 ack_flag_cnt
+    "URG Flag Count",              # 55 urg_flag_cnt
+    "ECE Flag Count",              # 56 ece_flag_cnt
+    "Down/Up Ratio",               # 57 down_up_ratio
+    "Average Packet Size",         # 58 pkt_size_avg
+    "Init_Win_bytes_forward",      # 59 init_fwd_win_byts
+    "Init_Win_bytes_backward",     # 60 init_bwd_win_byts
+    "Active Max",                  # 61 active_max
+    "Active Min",                  # 62 active_min
+    "Active Mean",                 # 63 active_mean
+    "Active Std",                  # 64 active_std
+    "Idle Max",                    # 65 idle_max
+    "Idle Min",                    # 66 idle_min
+    "Idle Mean",                   # 67 idle_mean
+    "Idle Std",                    # 68 idle_std
+    "Fwd Avg Bytes/Bulk",          # 69 fwd_byts_b_avg
+    "Fwd Avg Packets/Bulk",        # 70 fwd_pkts_b_avg
+    "Bwd Avg Bytes/Bulk",          # 71 bwd_byts_b_avg
+    "Bwd Avg Packets/Bulk",        # 72 bwd_pkts_b_avg
+    "Fwd Avg Bulk Rate",           # 73 fwd_blk_rate_avg
+    "Bwd Avg Bulk Rate",           # 74 bwd_blk_rate_avg
+    "Fwd Segment Size Avg",        # 75 fwd_seg_size_avg (alias of fwd_pkt_len_mean)
+    "Bwd Segment Size Avg",        # 76 bwd_seg_size_avg (alias of bwd_pkt_len_mean)
+    "CWE Flag Count",              # 77 cwe_flag_count (alias of fwd_urg_flags)
+    "Subflow Fwd Packets",         # 78 subflow_fwd_pkts
+    "Subflow Bwd Packets",         # 79 subflow_bwd_pkts
+    "Subflow Fwd Bytes",           # 80 subflow_fwd_byts
+    "Subflow Bwd Bytes",           # 81 subflow_bwd_byts
+]
+
+
+async def _forward_result(result: dict) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=OUTPUT_TIMEOUT_SEC) as client:
+            resp = await client.post(
+                OUTPUT_URL,
+                json=result,
+                headers={"Content-Type": "application/json"},
+            )
+        print(f"[ai_engine] forwarded result → {resp.status_code}")
+    except Exception as exc:
+        print(f"[ai_engine] forward failed: {exc}")
+
+
 @app.post("/predict")
 async def predict(request: Request):
     raw_body = await request.body()
@@ -212,21 +314,28 @@ async def predict(request: Request):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid CSV row: {exc}") from exc
 
-    if len(values) != len(feature_columns):
+    if len(values) == 82:
+        flow_dict = dict(zip(CIC_82_COLUMNS, values))
+    elif len(values) == len(feature_columns):
+        flow_dict = dict(zip(feature_columns, values))
+    else:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Column mismatch: got {len(values)} values, expected {len(feature_columns)} "
+                f"Column mismatch: got {len(values)} values, expected 82 or {len(feature_columns)} "
                 f"(based on feature_columns.pkl). Check that the CSV row matches the training schema."
             ),
-    )
-
-    flow_dict = dict(zip(feature_columns, values))
+        )
 
     # Sanity check: warn if model_feature_columns diverges from feature_columns after ID stripping
     expected_model_cols = set(model_feature_columns)
-    incoming_cols = set(feature_columns)
+    # Use flow_dict keys if we got 82 columns
+    incoming_cols = set(flow_dict.keys())
     missing = expected_model_cols - incoming_cols
+    # Remove identifiers from missing check
+    from process_flows import ID_ALIASES
+    missing = {m for m in missing if _norm(m) not in ID_ALIASES}
+    
     if missing:
         print(f"[ai_engine] WARNING: model expects columns not found in incoming flow: {missing}. Predictions may be wrong.")
     ids = _extract_identifiers(flow_dict)
@@ -278,4 +387,5 @@ async def predict(request: Request):
 
     # Must always print to container logs (including Normal).
     print(json.dumps(result, ensure_ascii=True))
+    await _forward_result(result)
     return result

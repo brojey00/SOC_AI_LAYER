@@ -7,17 +7,20 @@ services:
       dockerfile: Dockerfile
     container_name: ai_engine
     environment:
-      MODEL_PATH: soc_model.pkl
-      FEATURE_COLUMNS_PATH: feature_columns.pkl
-      LABEL_ENCODER_PATH: label_encoder.pkl
+      MODEL_PATH: /app/models/soc_model.pkl
+      FEATURE_COLUMNS_PATH: /app/models/feature_columns.pkl
+      LABEL_ENCODER_PATH: /app/models/label_encoder.pkl
       WAZUH_INDEXER_URL: ${WAZUH_INDEXER_URL:-}
       WAZUH_USERNAME: ${WAZUH_USERNAME:-}
       WAZUH_PASSWORD: ${WAZUH_PASSWORD:-}
       WAZUH_INDEX_PATTERN: ${WAZUH_INDEX_PATTERN:-wazuh-alerts-*}
       WAZUH_VERIFY_TLS: ${WAZUH_VERIFY_TLS:-false}
       WAZUH_TIMEOUT_SEC: ${WAZUH_TIMEOUT_SEC:-5}
+      OUTPUT_URL: ${OUTPUT_URL:-http://100.104.54.105:8080/ingest}
+      OUTPUT_TIMEOUT_SEC: ${OUTPUT_TIMEOUT_SEC:-5}
     volumes:
       - ./fastAPI:/app
+      - ./models:/app/models
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -41,3 +44,34 @@ services:
       - ai_engine
     restart: unless-stopped
 
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale
+    hostname: pcap-fetcher-node
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:-}
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - ./tailscale-data:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+      - sys_module
+    restart: unless-stopped
+
+  pcap_processor:
+    build:
+      context: ./flowmeter
+      dockerfile: Dockerfile
+    container_name: pcap_processor
+    network_mode: "service:tailscale"
+    environment:
+      - REMOTE_IP=${REMOTE_IP:-100.123.225.126}
+      - REMOTE_PATH=${REMOTE_PATH:-/opt/pcap/}
+      - SSH_USER=${SSH_USER:-root}
+      - SSH_PASSWORD=${SSH_PASSWORD:-yourpassword}
+    volumes:
+      - ./shared_data:/shared_data
+    depends_on:
+      - tailscale
+    restart: unless-stopped
