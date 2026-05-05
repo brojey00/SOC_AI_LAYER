@@ -296,7 +296,7 @@ async def _forward_result(result: dict) -> None:
             )
         print(f"[ai_engine] forwarded result → {resp.status_code}")
     except Exception as exc:
-        print(f"[ai_engine] forward failed: {exc}")
+        print(f"[ai_engine] forward failed ({type(exc).__name__}): {repr(exc)}")
 
 
 @app.post("/predict")
