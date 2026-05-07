@@ -64,12 +64,20 @@ def _encode_value(column: str, value: Any, feature_encoder: Any) -> Any:
     return value
 
 
+# CIC-IDS2017 pandas artefact: duplicate "Fwd Header Length" columns get
+# renamed to "Fwd Header Length.1" by pandas when loading the CSV.
+# cicflowmeter only produces one copy, so we alias .1 → the plain name.
+COLUMN_ALIASES: Dict[str, str] = {
+    _norm("Fwd Header Length.1"): "Fwd Header Length",
+}
+
+
 def prepare_features(
     raw_flow: Dict[str, Any],
     model_feature_columns: Iterable[str],
     feature_encoder: Optional[Any] = None,
 ) -> pd.DataFrame:
-    
+
     norm_to_original = {_norm(k): k for k in raw_flow.keys()}
     prepared: Dict[str, Any] = {}
 
@@ -77,6 +85,12 @@ def prepare_features(
         col_norm = _norm(col)
 
         original_key = norm_to_original.get(col_norm)
+
+        # Fallback: try alias (e.g. "Fwd Header Length.1" → "Fwd Header Length")
+        if original_key is None and col_norm in COLUMN_ALIASES:
+            alias = _norm(COLUMN_ALIASES[col_norm])
+            original_key = norm_to_original.get(alias)
+
         value = raw_flow.get(original_key) if original_key is not None else 0
 
         value = _encode_value(col, value, feature_encoder)

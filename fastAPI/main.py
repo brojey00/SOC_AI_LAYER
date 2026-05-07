@@ -277,7 +277,7 @@ CIC_82_COLUMNS = [
     "Fwd Avg Bulk Rate",           # 73 fwd_blk_rate_avg
     "Bwd Avg Bulk Rate",           # 74 bwd_blk_rate_avg
     "Fwd Segment Size Avg",        # 75 fwd_seg_size_avg (alias of fwd_pkt_len_mean)
-    "Bwd Segment Size Avg",        # 76 bwd_seg_size_avg (alias of bwd_pkt_len_mean)
+    "Avg Bwd Segment Size",        # 76 bwd_seg_size_avg — model pkl uses this name, NOT "Bwd Segment Size Avg"
     "CWE Flag Count",              # 77 cwe_flag_count (alias of fwd_urg_flags)
     "Subflow Fwd Packets",         # 78 subflow_fwd_pkts
     "Subflow Bwd Packets",         # 79 subflow_bwd_pkts
