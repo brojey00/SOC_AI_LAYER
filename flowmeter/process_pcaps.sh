@@ -21,7 +21,7 @@ while true; do
     "$SSH_USER@$REMOTE_IP:$REMOTE_PATH" "$SYNC_DIR/" \
     --include="tailscale_*.pcap" --exclude="*"
 
-  for pcap_file in "$SYNC_DIR"/*.pcap; do
+  for pcap_file in "$SYNC_DIR"/tailscale_*.pcap; do
     [ -e "$pcap_file" ] || continue
     filename=$(basename -- "$pcap_file")
 
@@ -29,45 +29,37 @@ while true; do
       continue
     fi
 
-    echo "[*] Processing new PCAP: $filename"
+    echo "[*] Processing: $filename"
 
-    # Use a temp dir per file to avoid any naming collisions
-    TMP_DIR=$(mktemp -d)
-    TMP_PCAP_ETH="$TMP_DIR/input.pcap"
-    # cicflowmeter -c writes to exactly the path you give — no .csv appended in newer versions
-    # but to be safe we name the output dir and let cicflowmeter write its own filename
-    TMP_CSV_OUT="$TMP_DIR/flows.csv"
+    TMP_ETH="/tmp/${filename}.eth.pcap"
+    TMP_CSV="/tmp/${filename}.csv"
 
-    # Step 1: Convert RAW IP -> Ethernet directly (no tcpdump intermediary needed)
-    python3 /app/convert_pcap.py "$pcap_file" "$TMP_PCAP_ETH"
+    # Step 1: Convert RAW IP -> Ethernet
+    python3 /app/convert_pcap.py "$pcap_file" "$TMP_ETH"
     if [ $? -ne 0 ]; then
       echo "[!] Conversion failed for $filename, skipping."
-      rm -rf "$TMP_DIR"
+      rm -f "$TMP_ETH"
       continue
     fi
 
-    # Step 2: Run cicflowmeter
-    cicflowmeter -f "$TMP_PCAP_ETH" -c "$TMP_CSV_OUT"
+    # Step 2: Run cicflowmeter — in v0.1.6 the output arg is the CSV filename directly
+    cicflowmeter -f "$TMP_ETH" -c "$TMP_CSV"
 
-    # Step 3: Find whatever CSV cicflowmeter actually wrote
-    ACTUAL_CSV=$(find "$TMP_DIR" -name "*.csv" | head -1)
+    rm -f "$TMP_ETH"
 
-    if [ -z "$ACTUAL_CSV" ]; then
-      echo "[!] cicflowmeter produced no CSV for $filename — skipping."
-      rm -rf "$TMP_DIR"
-      continue
-    fi
-
-    # Step 4: Append to shared output CSV (skip header if file already exists)
-    if [ ! -f "$OUTPUT_CSV" ]; then
-      cp "$ACTUAL_CSV" "$OUTPUT_CSV"
+    # Step 3: Append to shared CSV
+    if [ -f "$TMP_CSV" ]; then
+      if [ ! -f "$OUTPUT_CSV" ]; then
+        cp "$TMP_CSV" "$OUTPUT_CSV"
+      else
+        tail -n +2 "$TMP_CSV" >> "$OUTPUT_CSV"
+      fi
+      rm -f "$TMP_CSV"
+      echo "$filename" >> "$PROCESSED_LOG"
+      echo "[+] Done: $filename"
     else
-      tail -n +2 "$ACTUAL_CSV" >> "$OUTPUT_CSV"
+      echo "[!] No CSV output for $filename"
     fi
-
-    rm -rf "$TMP_DIR"
-    echo "$filename" >> "$PROCESSED_LOG"
-    echo "[+] Done: $filename"
   done
 
   sleep 10
