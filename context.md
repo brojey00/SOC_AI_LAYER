@@ -1,7 +1,7 @@
 ## 1. Capture (CICFlowMeter)
 
 The sensor listens directly to the server’s network interface  
-(specifically `eth0`) to capture traffic in the form of packets (PCAP) in real time.  
+(specifically `tailscale0`) to capture traffic in the form of packets (PCAP) in real time.  
 
 It then transforms this raw data into mathematical statistics and writes the result,  
 line by line, into a CSV file.

@@ -76,7 +76,7 @@ def tail_and_forward() -> None:
         print(f"[watcher] header columns: {header_count}")
 
         # Tail mode: only new rows after startup.
-        f.seek(0, os.SEEK_END)
+        # f.seek(0, os.SEEK_END)
 
         while True:
             line = f.readline()

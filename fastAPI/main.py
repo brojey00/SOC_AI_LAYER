@@ -196,6 +196,29 @@ if os.path.exists(LABEL_ENCODER_PATH):
 model_feature_columns = list(getattr(model, "feature_names_in_", feature_columns))
 
 
+# Standard CICFlowMeter (Python) output columns (82 count)
+CIC_82_COLUMNS = [
+    "src_ip", "dst_ip", "src_port", "Destination Port", "Protocol", "Timestamp",
+    "Flow Duration", "Total Fwd Packets", "Total Backward Packets", "Total Length of Fwd Packets",
+    "Total Length of Bwd Packets", "Fwd Packet Length Max", "Fwd Packet Length Min", "Fwd Packet Length Mean",
+    "Fwd Packet Length Std", "Bwd Packet Length Max", "Bwd Packet Length Min", "Bwd Packet Length Mean",
+    "Bwd Packet Length Std", "Flow Bytes/s", "Flow Packets/s", "Flow IAT Mean",
+    "Flow IAT Std", "Flow IAT Max", "Flow IAT Min", "Fwd IAT Total",
+    "Fwd IAT Mean", "Fwd IAT Std", "Fwd IAT Max", "Fwd IAT Min", "Bwd IAT Total",
+    "Bwd IAT Mean", "Bwd IAT Std", "Bwd IAT Max", "Bwd IAT Min", "Fwd PSH Flags",
+    "Bwd PSH Flags", "Fwd URG Flags", "Bwd URG Flags", "Fwd Header Length",
+    "Bwd Header Length", "Fwd Packets/s", "Bwd Packets/s", "Min Packet Length", "Max Packet Length",
+    "Packet Length Mean", "Packet Length Std", "Packet Length Variance", "FIN Flag Count", "SYN Flag Count",
+    "RST Flag Count", "PSH Flag Count", "ACK Flag Count", "URG Flag Count", "CWE Flag Count",
+    "ECE Flag Count", "Down/Up Ratio", "Average Packet Size", "Fwd Avg Bytes/Bulk", "Fwd Avg Packets/Bulk",
+    "Fwd Avg Bulk Rate", "Bwd Avg Bytes/Bulk", "Bwd Avg Packets/Bulk", "Bwd Avg Bulk Rate", "Subflow Fwd Packets",
+    "Subflow Fwd Bytes", "Subflow Bwd Packets", "Subflow Bwd Bytes", "Init_Win_bytes_forward",
+    "Init_Win_bytes_backward", "act_data_pkt_fwd", "min_seg_size_forward", "Active Mean",
+    "Active Std", "Active Max", "Active Min", "Idle Mean", "Idle Std", "Idle Max",
+    "Idle Min"
+]
+
+
 @app.post("/predict")
 async def predict(request: Request):
     raw_body = await request.body()
@@ -212,21 +235,28 @@ async def predict(request: Request):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid CSV row: {exc}") from exc
 
-    if len(values) != len(feature_columns):
+    if len(values) == 82:
+        flow_dict = dict(zip(CIC_82_COLUMNS, values))
+    elif len(values) == len(feature_columns):
+        flow_dict = dict(zip(feature_columns, values))
+    else:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Column mismatch: got {len(values)} values, expected {len(feature_columns)} "
+                f"Column mismatch: got {len(values)} values, expected 82 or {len(feature_columns)} "
                 f"(based on feature_columns.pkl). Check that the CSV row matches the training schema."
             ),
-    )
-
-    flow_dict = dict(zip(feature_columns, values))
+        )
 
     # Sanity check: warn if model_feature_columns diverges from feature_columns after ID stripping
     expected_model_cols = set(model_feature_columns)
-    incoming_cols = set(feature_columns)
+    # Use flow_dict keys if we got 82 columns
+    incoming_cols = set(flow_dict.keys())
     missing = expected_model_cols - incoming_cols
+    # Remove identifiers from missing check
+    from process_flows import ID_ALIASES
+    missing = {m for m in missing if _norm(m) not in ID_ALIASES}
+    
     if missing:
         print(f"[ai_engine] WARNING: model expects columns not found in incoming flow: {missing}. Predictions may be wrong.")
     ids = _extract_identifiers(flow_dict)

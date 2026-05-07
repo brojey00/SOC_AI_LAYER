@@ -75,10 +75,6 @@ def prepare_features(
     for col in model_feature_columns:
         col_norm = _norm(col)
 
-        # Enforce dropping identifiers from model input.
-        if col_norm in ID_ALIASES:
-            continue
-
         original_key = norm_to_original.get(col_norm)
         value = raw_flow.get(original_key) if original_key is not None else 0
 
