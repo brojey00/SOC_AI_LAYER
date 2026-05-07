@@ -64,11 +64,61 @@ def _encode_value(column: str, value: Any, feature_encoder: Any) -> Any:
     return value
 
 
-# CIC-IDS2017 pandas artefact: duplicate "Fwd Header Length" columns get
-# renamed to "Fwd Header Length.1" by pandas when loading the CSV.
-# cicflowmeter only produces one copy, so we alias .1 → the plain name.
+# COLUMN_ALIASES bridges the gap between:
+#   - Model feature names  (CIC-IDS2017 / training CSV naming convention)
+#   - cicflowmeter output  (abbreviated snake_case naming convention)
+#
+# Key   = _norm(model feature name)
+# Value = actual cicflowmeter CSV column name
+#
+# Diagnostic result (2026-05-07): without these aliases only 3/36 features
+# matched, causing 33 zero-valued inputs and constant 'Normal' predictions.
 COLUMN_ALIASES: Dict[str, str] = {
-    _norm("Fwd Header Length.1"): "Fwd Header Length",
+    # ── Destination port ──────────────────────────────────────────────────
+    _norm("Destination Port"):              "dst_port",
+    # ── Total packets / payload lengths ──────────────────────────────────
+    _norm("Total Fwd Packets"):             "tot_fwd_pkts",
+    _norm("Total Length of Fwd Packets"):   "totlen_fwd_pkts",
+    _norm("Total Length of Bwd Packets"):   "totlen_bwd_pkts",
+    # ── Fwd packet length stats ───────────────────────────────────────────
+    _norm("Fwd Packet Length Max"):         "fwd_pkt_len_max",
+    _norm("Fwd Packet Length Min"):         "fwd_pkt_len_min",
+    _norm("Fwd Packet Length Mean"):        "fwd_pkt_len_mean",
+    _norm("Fwd Packet Length Std"):         "fwd_pkt_len_std",
+    # ── Bwd packet length stats ───────────────────────────────────────────
+    _norm("Bwd Packet Length Min"):         "bwd_pkt_len_min",
+    _norm("Bwd Packet Length Mean"):        "bwd_pkt_len_mean",
+    _norm("Bwd Packet Length Std"):         "bwd_pkt_len_std",
+    # ── Flow rates ────────────────────────────────────────────────────────
+    _norm("Flow Bytes/s"):                  "flow_byts_s",
+    _norm("Bwd Packets/s"):                 "bwd_pkts_s",
+    # ── Header lengths ────────────────────────────────────────────────────
+    _norm("Fwd Header Length"):             "fwd_header_len",
+    _norm("Bwd Header Length"):             "bwd_header_len",
+    _norm("Fwd Header Length.1"):           "fwd_header_len",  # pandas duplicate → same col
+    # ── Packet length stats ───────────────────────────────────────────────
+    _norm("Min Packet Length"):             "pkt_len_min",
+    _norm("Max Packet Length"):             "pkt_len_max",
+    _norm("Packet Length Mean"):            "pkt_len_mean",
+    _norm("Packet Length Std"):             "pkt_len_std",
+    _norm("Packet Length Variance"):        "pkt_len_var",
+    # ── TCP flags  (_count vs _cnt) ───────────────────────────────────────
+    _norm("FIN Flag Count"):                "fin_flag_cnt",
+    _norm("PSH Flag Count"):                "psh_flag_cnt",
+    _norm("ACK Flag Count"):                "ack_flag_cnt",
+    # ── Packet / segment sizes ────────────────────────────────────────────
+    _norm("Average Packet Size"):           "pkt_size_avg",
+    _norm("Avg Bwd Segment Size"):          "bwd_seg_size_avg",
+    # ── Subflows  (_packets/_bytes vs _pkts/_byts) ────────────────────────
+    _norm("Subflow Fwd Packets"):           "subflow_fwd_pkts",
+    _norm("Subflow Fwd Bytes"):             "subflow_fwd_byts",
+    _norm("Subflow Bwd Packets"):           "subflow_bwd_pkts",
+    _norm("Subflow Bwd Bytes"):             "subflow_bwd_byts",
+    # ── Init window bytes ─────────────────────────────────────────────────
+    _norm("Init_Win_bytes_forward"):        "init_fwd_win_byts",
+    _norm("Init_Win_bytes_backward"):       "init_bwd_win_byts",
+    # ── Min segment size ──────────────────────────────────────────────────
+    _norm("min_seg_size_forward"):          "fwd_seg_size_min",
 }
 
 

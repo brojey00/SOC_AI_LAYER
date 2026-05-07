@@ -20,9 +20,11 @@ services:
       OUTPUT_TIMEOUT_SEC: ${OUTPUT_TIMEOUT_SEC:-5}
       DEBUG_FEATURES: ${DEBUG_FEATURES:-false}
       NORMAL_CONFIDENCE_THRESHOLD: ${NORMAL_CONFIDENCE_THRESHOLD:-0.85}
+      CSV_PATH: ${CSV_PATH:-/shared_data/live_flows.csv}
     volumes:
       - ./fastAPI:/app
       - ./models:/app/models
+      - ./shared_data:/shared_data:ro
     ports:
       - "8000:8000"
     restart: unless-stopped

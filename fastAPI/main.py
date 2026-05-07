@@ -16,6 +16,7 @@ app = FastAPI(title="SOC AI Engine", version="1.0.0")
 MODEL_PATH = os.getenv("MODEL_PATH", "soc_model.pkl")
 FEATURE_COLUMNS_PATH = os.getenv("FEATURE_COLUMNS_PATH", "feature_columns.pkl")
 LABEL_ENCODER_PATH = os.getenv("LABEL_ENCODER_PATH", "label_encoder.pkl")
+CSV_PATH = os.getenv("CSV_PATH", "/shared_data/live_flows.csv")
 
 WAZUH_INDEXER_URL = os.getenv("WAZUH_INDEXER_URL", "").rstrip("/")
 WAZUH_USERNAME = os.getenv("WAZUH_USERNAME", "")
@@ -198,6 +199,21 @@ if os.path.exists(LABEL_ENCODER_PATH):
 model_feature_columns = list(getattr(model, "feature_names_in_", feature_columns))
 
 
+# ── Header-based CSV mapping ──────────────────────────────────────────────────
+# Read the actual column names from live_flows.csv once at startup.  This makes
+# flow_dict keys identical to what cicflowmeter wrote, so COLUMN_ALIASES in
+# process_flows.py can resolve all 36 model features without guessing order.
+_cached_csv_headers: list = []
+try:
+    with open(CSV_PATH, "r", newline="", encoding="utf-8") as _fh:
+        _cached_csv_headers = next(csv.reader(_fh))
+    print(f"[ai_engine] Loaded CSV header ({len(_cached_csv_headers)} cols) from {CSV_PATH}")
+except FileNotFoundError:
+    print(f"[ai_engine] WARNING: {CSV_PATH} not found at startup — will use CIC_82_COLUMNS positional fallback.")
+except Exception as _exc:
+    print(f"[ai_engine] WARNING: Could not read CSV header from {CSV_PATH}: {_exc}")
+
+
 # Actual cicflowmeter (hieulw/cicflowmeter) output column order
 # mapped to CIC-IDS2017 names that match the model's training features.
 CIC_82_COLUMNS = [
@@ -315,7 +331,20 @@ async def predict(request: Request):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid CSV row: {exc}") from exc
 
-    if len(values) == 82:
+    # Prefer header-based mapping using the real cicflowmeter column names cached
+    # at startup from live_flows.csv.  This ensures flow_dict keys exactly match
+    # what cicflowmeter wrote, so COLUMN_ALIASES in process_flows.py can bridge
+    # them to the model's CIC-IDS2017 feature names.
+    if _cached_csv_headers and len(values) == len(_cached_csv_headers):
+        flow_dict = dict(zip(_cached_csv_headers, values))
+    elif _cached_csv_headers and len(values) != len(_cached_csv_headers):
+        print(
+            f"[ai_engine] WARNING: row has {len(values)} values but CSV header has "
+            f"{len(_cached_csv_headers)} cols — falling back to CIC_82_COLUMNS positional map."
+        )
+        flow_dict = dict(zip(CIC_82_COLUMNS, values)) if len(values) == 82 else dict(zip(feature_columns, values))
+    elif len(values) == 82:
+        # No cached header — use hardcoded positional fallback
         flow_dict = dict(zip(CIC_82_COLUMNS, values))
     elif len(values) == len(feature_columns):
         flow_dict = dict(zip(feature_columns, values))
@@ -323,22 +352,17 @@ async def predict(request: Request):
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Column mismatch: got {len(values)} values, expected 82 or {len(feature_columns)} "
-                f"(based on feature_columns.pkl). Check that the CSV row matches the training schema."
+                f"Column mismatch: got {len(values)} values; cached CSV header has "
+                f"{len(_cached_csv_headers)} cols, expected 82 or {len(feature_columns)}. "
+                f"Check that the CSV row matches the cicflowmeter schema."
             ),
         )
 
-    # Sanity check: warn if model_feature_columns diverges from feature_columns after ID stripping
-    expected_model_cols = set(model_feature_columns)
-    # Use flow_dict keys if we got 82 columns
-    incoming_cols = set(flow_dict.keys())
-    missing = expected_model_cols - incoming_cols
-    # Remove identifiers from missing check
+    # Sanity check: warn if incoming column count looks unexpected
+    if not _cached_csv_headers:
+        print("[ai_engine] WARNING: CSV header cache is empty — using positional fallback. "
+              f"Mount {CSV_PATH} into the container to enable header-based mapping.")
     from process_flows import ID_ALIASES
-    missing = {m for m in missing if _norm(m) not in ID_ALIASES}
-    
-    if missing:
-        print(f"[ai_engine] WARNING: model expects columns not found in incoming flow: {missing}. Predictions may be wrong.")
     ids = _extract_identifiers(flow_dict)
     obs = _extract_observability_fields(flow_dict)
 
