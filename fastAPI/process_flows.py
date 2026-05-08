@@ -119,6 +119,25 @@ COLUMN_ALIASES: Dict[str, str] = {
     _norm("Init_Win_bytes_backward"):       "init_bwd_win_byts",
     # ── Min segment size ──────────────────────────────────────────────────
     _norm("min_seg_size_forward"):          "fwd_seg_size_min",
+    # ── Bwd IAT stats (missing aliases) ───────────────────────────────────
+    _norm("Bwd IAT Mean"):                  "bwd_iat_mean",
+    _norm("Bwd IAT Std"):                   "bwd_iat_std",
+    _norm("Bwd IAT Total"):                 "bwd_iat_tot",
+    _norm("Bwd IAT Max"):                   "bwd_iat_max",
+    _norm("Bwd IAT Min"):                   "bwd_iat_min",
+    # ── PSH flags (missing aliases) ────────────────────────────────────────
+    _norm("Fwd PSH Flags"):                 "fwd_psh_flags",
+    _norm("Bwd PSH Flags"):                 "bwd_psh_flags",
+    # ── Active stats (missing aliases) ─────────────────────────────────────
+    _norm("Active Std"):                    "active_std",
+    _norm("Active Mean"):                   "active_mean",
+    _norm("Active Max"):                    "active_max",
+    _norm("Active Min"):                    "active_min",
+    # ── Idle stats ─────────────────────────────────────────────────────────
+    _norm("Idle Std"):                      "idle_std",
+    _norm("Idle Mean"):                     "idle_mean",
+    _norm("Idle Max"):                      "idle_max",
+    _norm("Idle Min"):                      "idle_min",
 }
 
 
