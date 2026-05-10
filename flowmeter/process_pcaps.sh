@@ -21,8 +21,7 @@ while true; do
     "$SSH_USER@$REMOTE_IP:$REMOTE_PATH" "$SYNC_DIR/" \
     --include="tailscale_*.pcap" --exclude="*"
 
-  for pcap_file in "$SYNC_DIR"/tailscale_*.pcap; do
-    [ -e "$pcap_file" ] || continue
+  while IFS= read -r -d '' pcap_file; do
     filename=$(basename -- "$pcap_file")
 
     if grep -Fxq "$filename" "$PROCESSED_LOG"; then
@@ -35,36 +34,32 @@ while true; do
     TMP_PCAP="/tmp/${filename}.pcap"
     TMP_CSV="/tmp/${filename}.csv"
 
-    # Step 1: Convert RAW IP -> Ethernet
-    python3 /app/convert_pcap.py "$pcap_file" "$TMP_ETH"
-    if [ $? -ne 0 ]; then
-      echo "[!] Conversion failed for $filename, attempting pcapng -> pcap."
-      tcpdump -r "$pcap_file" -w "$TMP_PCAP"
-      if [ $? -ne 0 ]; then
-        echo "[!] pcapng -> pcap conversion failed for $filename, skipping."
-        rm -f "$TMP_PCAP" "$TMP_ETH"
-        continue
-      fi
-
-      echo "[+] pcapng -> pcap conversion complete for $filename"
-
-      python3 /app/convert_pcap.py "$TMP_PCAP" "$TMP_ETH"
-      conv_status=$?
-      rm -f "$TMP_PCAP"
-      if [ $conv_status -ne 0 ]; then
-        echo "[!] Conversion failed after pcapng -> pcap for $filename, skipping."
-        rm -f "$TMP_ETH"
-        continue
-      fi
+    # Step 1: Normalize pcapng -> pcap (tcpdump understands both)
+    if ! tcpdump -r "$pcap_file" -w "$TMP_PCAP"; then
+      echo "[!] tcpdump conversion failed for $filename, skipping."
+      rm -f "$TMP_PCAP" "$TMP_ETH"
+      continue
     fi
 
-    # Step 2: Run cicflowmeter — in v0.1.6 the output arg is the CSV filename directly
-    cicflowmeter -f "$TMP_ETH" -c "$TMP_CSV"
+    # Step 2: Convert RAW IP -> Ethernet
+    if ! python3 /app/convert_pcap.py "$TMP_PCAP" "$TMP_ETH"; then
+      echo "[!] RAW->Ethernet conversion failed for $filename, skipping."
+      rm -f "$TMP_PCAP" "$TMP_ETH"
+      continue
+    fi
+    rm -f "$TMP_PCAP"
+
+    # Step 3: Run cicflowmeter — in v0.1.6 the output arg is the CSV filename directly
+    if ! cicflowmeter -f "$TMP_ETH" -c "$TMP_CSV"; then
+      echo "[!] cicflowmeter failed for $filename"
+      rm -f "$TMP_ETH" "$TMP_CSV"
+      continue
+    fi
 
     rm -f "$TMP_ETH"
 
-    # Step 3: Append to shared CSV
-    if [ -f "$TMP_CSV" ]; then
+    # Step 4: Append to shared CSV
+    if [ -s "$TMP_CSV" ]; then
       if [ ! -f "$OUTPUT_CSV" ]; then
         cp "$TMP_CSV" "$OUTPUT_CSV"
       else
@@ -75,8 +70,9 @@ while true; do
       echo "[+] Done: $filename"
     else
       echo "[!] No CSV output for $filename"
+      rm -f "$TMP_CSV"
     fi
-  done
+  done < <(find "$SYNC_DIR" -maxdepth 1 -type f -name "tailscale_*.pcap" -print0 | sort -z)
 
   sleep 10
 done

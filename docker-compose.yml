@@ -7,8 +7,8 @@ services:
       dockerfile: Dockerfile
     container_name: ai_engine
     environment:
-      MODEL_PATH: /app/models/soc_model.pkl
-      FEATURE_COLUMNS_PATH: /app/models/feature_columns.pkl
+      MODEL_PATH: /app/models/tier1_lightgbm.pkl
+      FEATURE_COLUMNS_PATH: /app/models/selected_features.pkl
       LABEL_ENCODER_PATH: /app/models/label_encoder.pkl
       WAZUH_INDEXER_URL: ${WAZUH_INDEXER_URL:-}
       WAZUH_USERNAME: ${WAZUH_USERNAME:-}

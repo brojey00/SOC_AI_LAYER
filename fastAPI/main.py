@@ -2,6 +2,7 @@ import csv
 import json
 import os
 import pickle
+import joblib
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List
@@ -13,8 +14,8 @@ from process_flows import prepare_features, debug_features
 
 app = FastAPI(title="SOC AI Engine", version="1.0.0")
 
-MODEL_PATH = os.getenv("MODEL_PATH", "soc_model.pkl")
-FEATURE_COLUMNS_PATH = os.getenv("FEATURE_COLUMNS_PATH", "feature_columns.pkl")
+MODEL_PATH = os.getenv("MODEL_PATH", "tier1_lightgbm.pkl")
+FEATURE_COLUMNS_PATH = os.getenv("FEATURE_COLUMNS_PATH", "selected_features.pkl")
 LABEL_ENCODER_PATH = os.getenv("LABEL_ENCODER_PATH", "label_encoder.pkl")
 CSV_PATH = os.getenv("CSV_PATH", "/shared_data/live_flows.csv")
 
@@ -175,23 +176,29 @@ async def _query_wazuh_full_log(src_ip: str) -> str:
         return ""
 
 
+def _load_artifact(path: str) -> Any:
+    try:
+        return joblib.load(path)
+    except Exception:
+        with open(path, "rb") as f:
+            return pickle.load(f)
+
+
 try:
-    with open(MODEL_PATH, "rb") as f:
-        model = pickle.load(f)
+    model = _load_artifact(MODEL_PATH)
+    print(f"[ai_engine] Loaded model: {type(model).__name__}")
 except FileNotFoundError:
     raise RuntimeError(f"[ai_engine] Model file not found: {MODEL_PATH}. Place soc_model.pkl in the /app directory.")
 
 try:
-    with open(FEATURE_COLUMNS_PATH, "rb") as f:
-        feature_columns = pickle.load(f)
+    feature_columns = _load_artifact(FEATURE_COLUMNS_PATH)
 except FileNotFoundError:
     raise RuntimeError(f"[ai_engine] Feature columns file not found: {FEATURE_COLUMNS_PATH}. Place feature_columns.pkl in the /app directory.")
 
 label_encoder = None
 if os.path.exists(LABEL_ENCODER_PATH):
     try:
-        with open(LABEL_ENCODER_PATH, "rb") as f:
-            label_encoder = pickle.load(f)
+        label_encoder = _load_artifact(LABEL_ENCODER_PATH)
     except Exception as exc:
         print(f"[ai_engine] WARNING: Could not load label encoder: {exc}. Predictions will use raw numeric labels.")
 
@@ -204,14 +211,26 @@ model_feature_columns = list(getattr(model, "feature_names_in_", feature_columns
 # flow_dict keys identical to what cicflowmeter wrote, so COLUMN_ALIASES in
 # process_flows.py can resolve all 36 model features without guessing order.
 _cached_csv_headers: list = []
-try:
-    with open(CSV_PATH, "r", newline="", encoding="utf-8") as _fh:
-        _cached_csv_headers = next(csv.reader(_fh))
-    print(f"[ai_engine] Loaded CSV header ({len(_cached_csv_headers)} cols) from {CSV_PATH}")
-except FileNotFoundError:
-    print(f"[ai_engine] WARNING: {CSV_PATH} not found at startup — will use CIC_82_COLUMNS positional fallback.")
-except Exception as _exc:
-    print(f"[ai_engine] WARNING: Could not read CSV header from {CSV_PATH}: {_exc}")
+_csv_header_warned = False
+
+
+def _load_csv_headers_if_missing() -> None:
+    global _cached_csv_headers, _csv_header_warned
+    if _cached_csv_headers:
+        return
+    try:
+        with open(CSV_PATH, "r", newline="", encoding="utf-8") as _fh:
+            _cached_csv_headers = next(csv.reader(_fh))
+        print(f"[ai_engine] Loaded CSV header ({len(_cached_csv_headers)} cols) from {CSV_PATH}")
+    except FileNotFoundError:
+        if not _csv_header_warned:
+            print(f"[ai_engine] WARNING: {CSV_PATH} not found — using positional fallback.")
+            _csv_header_warned = True
+    except Exception as _exc:
+        if not _csv_header_warned:
+            print(f"[ai_engine] WARNING: Could not read CSV header from {CSV_PATH}: {_exc}")
+            _csv_header_warned = True
+_load_csv_headers_if_missing()
 
 
 # Actual cicflowmeter (hieulw/cicflowmeter) output column order
@@ -320,6 +339,8 @@ async def predict(request: Request):
     raw_body = await request.body()
     if not raw_body:
         raise HTTPException(status_code=400, detail="Empty body")
+
+    _load_csv_headers_if_missing()
 
     try:
         raw_csv = raw_body.decode("utf-8").strip()
